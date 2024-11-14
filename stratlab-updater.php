@@ -2,7 +2,7 @@
 /*
 Plugin Name: StratLab Updater
 Description: Centralized GitHub updater for StratLab plugins.
-Version: 1.0.3
+Version: 1.0.3.1
 Author: StratLab Marketing
 Author URI: https://strategylab.ca/
 Text Domain: stratlab-updater
@@ -152,8 +152,12 @@ class StratLabUpdater {
 			return $transient;
 		}
 
+		// Get the current version dynamically from plugin metadata
+		$pluginData = get_plugin_data(__FILE__);
+		$currentVersion = $pluginData['Version'];
+
 		$repoInfo = $this->getRepositoryInfo($this->selfUpdaterRepoUrl);
-		if ($repoInfo && isset($repoInfo->tag_name) && version_compare('1.0.0', $repoInfo->tag_name, '<')) {
+		if ($repoInfo && isset($repoInfo->tag_name) && version_compare($currentVersion, $repoInfo->tag_name, '<')) {
 			$transient->response[$this->pluginFile] = (object)[
 				'slug' => $this->pluginFile,
 				'new_version' => $repoInfo->tag_name ?? '',
