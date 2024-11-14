@@ -2,7 +2,7 @@
 /*
 Plugin Name: StratLab Updater
 Description: Centralized GitHub updater for StratLab plugins.
-Version: 1.0.1
+Version: 1.0.3
 Author: StratLab Marketing
 Author URI: https://strategylab.ca/
 Text Domain: stratlab-updater
@@ -47,68 +47,93 @@ class StratLabUpdater {
     }
 
     public function checkForUpdates($transient) {
-        if (empty($transient->checked)) {
-            return $transient;
-        }
+		if (empty($transient->checked)) {
+			return $transient;
+		}
 
-        foreach ($this->registeredPlugins as $plugin) {
-            $repoInfo = $this->getRepositoryInfo($plugin['repo_url'], $plugin['access_token'] ?? '');
-            if ($repoInfo && version_compare($plugin['version'], $repoInfo->tag_name, '<')) {
-                $pluginSlug = $plugin['slug'];
-                $transient->response[$pluginSlug] = (object)[
-                    'slug' => $pluginSlug,
-                    'new_version' => $repoInfo->tag_name,
-                    'url' => $repoInfo->html_url,
-                    'package' => $repoInfo->zipball_url,
-                ];
-            }
-        }
+		foreach ($this->registeredPlugins as $plugin) {
+			$repoInfo = $this->getRepositoryInfo($plugin['repo_url'], $plugin['access_token'] ?? '');
 
-        return $transient;
-    }
+			if ($repoInfo && isset($repoInfo->tag_name) && version_compare($plugin['version'], $repoInfo->tag_name, '<')) {
+				$pluginSlug = $plugin['slug'];
+
+				// Check if repoInfo properties exist before using them
+				$transient->response[$pluginSlug] = (object)[
+					'slug' => $pluginSlug,
+					'new_version' => $repoInfo->tag_name,
+					'url' => $repoInfo->html_url ?? '',
+					'package' => $repoInfo->zipball_url ?? '',
+				];
+			}
+		}
+
+		return $transient;
+	}
 
     private function getRepositoryInfo($repoUrl, $accessToken = '') {
-        $args = [
-            'headers' => [
-                'Accept' => 'application/vnd.github.v3+json',
-                'User-Agent' => 'WordPress',
-            ],
-        ];
+		$args = [
+			'headers' => [
+				'Accept' => 'application/vnd.github.v3+json',
+				'User-Agent' => 'WordPress',
+			],
+		];
 
-        if (!empty($accessToken)) {
-            $args['headers']['Authorization'] = "token {$accessToken}";
-        }
+		if (!empty($accessToken)) {
+			$args['headers']['Authorization'] = "token {$accessToken}";
+		}
 
-        $response = wp_remote_get($repoUrl, $args);
-        if (is_wp_error($response)) {
-            return false;
-        }
+		$response = wp_remote_get($repoUrl, $args);
+		if (is_wp_error($response)) {
+			error_log('GitHub API request failed: ' . $response->get_error_message());
+			return false;
+		}
 
-        return json_decode(wp_remote_retrieve_body($response));
-    }
+		$body = wp_remote_retrieve_body($response);
+		if (empty($body)) {
+			error_log('GitHub API returned empty body.');
+			return false;
+		}
+
+		return json_decode($body);
+	}
 
     public function setPluginInfo($false, $action, $response) {
-        foreach ($this->registeredPlugins as $plugin) {
-            if (isset($response->slug) && $response->slug === $plugin['slug']) {
-                $repoInfo = $this->getRepositoryInfo($plugin['repo_url'], $plugin['access_token'] ?? '');
-                if ($repoInfo) {
-                    $response->last_updated = $repoInfo->published_at;
-                    $response->slug = $plugin['slug'];
-                    $response->plugin_name = $plugin['name'] ?? '';
-                    $response->version = $repoInfo->tag_name;
-                    $response->author = $plugin['author'] ?? '';
-                    $response->homepage = $plugin['homepage'] ?? '';
-                    $response->sections = [
-                        'description' => $plugin['description'] ?? '',
-                        'changelog' => $repoInfo->body,
-                    ];
-                    $response->download_link = $repoInfo->zipball_url;
-                }
-            }
-        }
-        return $response;
-    }
+		if ($action !== 'plugin_information' || empty($response->slug)) {
+			return $false;
+		}
 
+		foreach ($this->registeredPlugins as $plugin) {
+			if ($response->slug === $plugin['slug']) {
+				$repoInfo = $this->getRepositoryInfo($plugin['repo_url'], $plugin['access_token'] ?? '');
+
+				if ($repoInfo) {
+					$response->name = $plugin['name'] ?? 'Unknown Plugin';
+					$response->slug = $plugin['slug'];
+					$response->version = $repoInfo->tag_name ?? '1.0.0';
+					$response->author = $plugin['author'] ?? 'Unknown Author';
+					$response->homepage = $plugin['homepage'] ?? '';
+					$response->requires = ''; // Optional: Add required WP version if available
+					$response->tested = ''; // Optional: Add tested WP version if available
+					$response->last_updated = $repoInfo->published_at ?? '';
+					$response->sections = [
+						'description' => $plugin['description'] ?? 'No description available.',
+						'changelog' => $repoInfo->body ?? 'No changelog available.',
+					];
+					$response->download_link = $repoInfo->zipball_url ?? '';
+
+					// Adding a few more fields that WP may expect
+					$response->banners = []; // Optional: Could be URLs for banners (e.g., promotional images)
+					$response->icons = []; // Optional: Could be URLs for icons
+					$response->contributors = []; // Optional: Array of contributors
+
+					return $response;
+				}
+			}
+		}
+
+		return $false;
+	}
+	
     public function postInstall($true, $hook_extra, $result) {
         global $wp_filesystem;
         foreach ($this->registeredPlugins as $plugin) {
@@ -123,22 +148,22 @@ class StratLabUpdater {
     }
 
     public function checkForSelfUpdate($transient) {
-        if (empty($transient->checked)) {
-            return $transient;
-        }
+		if (empty($transient->checked)) {
+			return $transient;
+		}
 
-        $repoInfo = $this->getRepositoryInfo($this->selfUpdaterRepoUrl);
-        if ($repoInfo && version_compare('1.0.0', $repoInfo->tag_name, '<')) {
-            $transient->response[$this->pluginFile] = (object)[
-                'slug' => $this->pluginFile,
-                'new_version' => $repoInfo->tag_name,
-                'url' => $repoInfo->html_url,
-                'package' => $repoInfo->zipball_url,
-            ];
-        }
+		$repoInfo = $this->getRepositoryInfo($this->selfUpdaterRepoUrl);
+		if ($repoInfo && isset($repoInfo->tag_name) && version_compare('1.0.0', $repoInfo->tag_name, '<')) {
+			$transient->response[$this->pluginFile] = (object)[
+				'slug' => $this->pluginFile,
+				'new_version' => $repoInfo->tag_name ?? '',
+				'url' => $repoInfo->html_url ?? '',
+				'package' => $repoInfo->zipball_url ?? '',
+			];
+		}
 
-        return $transient;
-    }
+		return $transient;
+	}
 
     public function selfPostInstall($true, $hook_extra, $result) {
         global $wp_filesystem;
